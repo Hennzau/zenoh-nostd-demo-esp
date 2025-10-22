@@ -30,11 +30,16 @@ embassy-net = { version = "0.7.1", features = [
 ] }
 embassy-time = "0.5.0"
 
+# Zenoh
+zenoh-nostd = { git = "ssh://git@github.com/ZettaScaleLabs/zenoh-nostd", branch = "develop"}
+zenoh-nostd-embassy = { git = "ssh://git@github.com/ZettaScaleLabs/zenoh-nostd", branch = "develop" }
+
 # Other
 static_cell = "2.1.1"
 defmt = "1.0.1"
 embedded-hal-async = "1.0.0"
 libm = { version = "0.2.15", default-features = false }
+getrandom = { version = "0.2.16", features = ["custom"] }
 
 [profile.dev]
 opt-level = "s"

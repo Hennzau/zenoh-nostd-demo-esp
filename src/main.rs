@@ -5,19 +5,17 @@ use embassy_executor::Spawner;
 use embassy_net::{DhcpConfig, Runner, Stack, StackResources};
 use embassy_time::{Duration, Timer};
 use esp_hal::{
-    Async,
-    clock::CpuClock,
-    i2c::{self, master::I2c},
-    rng::Rng,
-    time::Rate,
-    timer::systimer::SystemTimer,
+    Async, clock::CpuClock, i2c::master::I2c, rng::Rng, time::Rate, timer::systimer::SystemTimer,
 };
 use esp_println as _;
 use esp_radio::{
     Controller,
     wifi::{ClientConfig, ModeConfig, WifiController, WifiDevice, WifiEvent, WifiStaState},
 };
+use getrandom::{Error, register_custom_getrandom};
 use static_cell::StaticCell;
+use zenoh_nostd::{keyexpr::borrowed::keyexpr, protocol::core::endpoint::EndPoint};
+use zenoh_nostd_embassy::PlatformEmbassy;
 
 use crate::mpu6050::Mpu6050;
 
@@ -34,14 +32,48 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 mod mpu6050;
 
-const SSID: &str = env!("WIFI_SSID");
+const SSID: Option<&str> = option_env!("WIFI_SSID");
 const PASSWORD: &str = env!("WIFI_PASSWORD");
 const CONNECT: Option<&str> = option_env!("CONNECT");
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
+    zenoh_nostd::info!("zenoh-nostd DEMO!");
+
     let (stack, i2c) = init_esp32(spawner).await;
-    let mpu = Mpu6050::new(i2c);
+    let mut mpu = Mpu6050::new(i2c);
+
+    let mut session = zenoh_nostd::open!(
+        zenoh_nostd::zconfig!(
+                PlatformEmbassy: (spawner, PlatformEmbassy { stack: stack }),
+                TX: 512,
+                RX: 512,
+                SUBSCRIBERS: 2
+        ),
+        EndPoint::try_from(CONNECT.unwrap_or("tcp/192.168.21.90:7447")).unwrap()
+    )
+    .unwrap();
+
+    let ke: &'static keyexpr = "demo/gyro".try_into().unwrap();
+    let mut payload = [0u8; 12];
+
+    loop {
+        let gyro = mpu.get_gyro().await.unwrap();
+
+        payload[0..4].copy_from_slice(&gyro.x.to_le_bytes());
+        payload[4..8].copy_from_slice(&gyro.y.to_le_bytes());
+        payload[8..12].copy_from_slice(&gyro.z.to_le_bytes());
+
+        session.put(ke, &payload).await.unwrap();
+
+        embassy_time::Timer::after(embassy_time::Duration::from_hz(16)).await;
+    }
+}
+
+register_custom_getrandom!(getrandom_custom);
+pub fn getrandom_custom(bytes: &mut [u8]) -> Result<(), Error> {
+    Rng::new().read(bytes);
+    Ok(())
 }
 
 async fn init_esp32(spawner: Spawner) -> (Stack<'static>, I2c<'static, Async>) {
@@ -127,7 +159,7 @@ async fn connection(mut controller: WifiController<'static>) {
         if !matches!(controller.is_started(), Ok(true)) {
             let client_config = ModeConfig::Client(
                 ClientConfig::default()
-                    .with_ssid(SSID.into())
+                    .with_ssid(SSID.unwrap_or("ZettaScale").into())
                     .with_password(PASSWORD.into()),
             );
             controller.set_config(&client_config).unwrap();
