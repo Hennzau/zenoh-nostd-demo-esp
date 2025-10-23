@@ -63,7 +63,7 @@ async fn main(spawner: Spawner) {
                 RX: 2048,
                 SUBSCRIBERS: 2
         ),
-        EndPoint::try_from(CONNECT.unwrap_or("tcp/192.168.21.90:7447")).unwrap()
+        EndPoint::try_from(CONNECT.unwrap_or("udp/192.168.21.90:7447")).unwrap()
     )
     .unwrap();
 
@@ -107,7 +107,7 @@ async fn main(spawner: Spawner) {
         session.put(ke, &payload[..size]).await.unwrap();
         defmt::debug!("Put complete");
 
-        embassy_time::Timer::after(embassy_time::Duration::from_hz(5)).await;
+        embassy_time::Timer::after(embassy_time::Duration::from_hz(15)).await;
     }
 }
 

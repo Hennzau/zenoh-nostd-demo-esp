@@ -1858,7 +1858,7 @@ dependencies = [
 [[package]]
 name = "zenoh-nostd"
 version = "1.5.1"
-source = "git+ssh://git@github.com/ZettaScaleLabs/zenoh-nostd?branch=demo%2Fattachment#f8fd2d01455e0359330c3d643fca47d453262a9f"
+source = "git+ssh://git@github.com/ZettaScaleLabs/zenoh-nostd?branch=demo%2Fattachment#acc9478b8052da04d1654c59f058d14d232661d3"
 dependencies = [
  "const_format",
  "embassy-executor",
@@ -1897,7 +1897,7 @@ dependencies = [
 [[package]]
 name = "zenoh-nostd-embassy"
 version = "1.5.1"
-source = "git+ssh://git@github.com/ZettaScaleLabs/zenoh-nostd?branch=demo%2Fattachment#f8fd2d01455e0359330c3d643fca47d453262a9f"
+source = "git+ssh://git@github.com/ZettaScaleLabs/zenoh-nostd?branch=demo%2Fattachment#acc9478b8052da04d1654c59f058d14d232661d3"
 dependencies = [
  "embassy-net",
  "embedded-io-async 0.6.1",
