@@ -13,11 +13,12 @@ use esp_radio::{
     wifi::{ClientConfig, ModeConfig, WifiController, WifiDevice, WifiEvent, WifiStaState},
 };
 use getrandom::{Error, register_custom_getrandom};
+use libm::round;
 use static_cell::StaticCell;
 use zenoh_nostd::{keyexpr::borrowed::keyexpr, protocol::core::endpoint::EndPoint};
 use zenoh_nostd_embassy::PlatformEmbassy;
 
-use crate::mpu6050::Mpu6050;
+use crate::mpu6050::{AccelFullScaleRange, GyroFullScaleRange, MPU6050, SleepMode, TempDisable};
 
 #[panic_handler]
 fn panic(panic: &core::panic::PanicInfo) -> ! {
@@ -31,42 +32,82 @@ extern crate alloc;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 mod mpu6050;
+mod twist;
 
 const SSID: Option<&str> = option_env!("WIFI_SSID");
 const PASSWORD: &str = env!("WIFI_PASSWORD");
 const CONNECT: Option<&str> = option_env!("CONNECT");
+const KEYEXPR: Option<&str> = option_env!("KEYEXPR");
+
+const SCALE_Z: Option<&str> = option_env!("SCALE_Z");
+const SCALE_Y: Option<&str> = option_env!("SCALE_Y");
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
+    let scale_z: f64 = SCALE_Z.unwrap_or("1.0").parse().unwrap_or(1.0);
+    let scale_y: f64 = SCALE_Y.unwrap_or("1.0").parse().unwrap_or(1.0);
+
     zenoh_nostd::info!("zenoh-nostd DEMO!");
 
     let (stack, i2c) = init_esp32(spawner).await;
-    let mut mpu = Mpu6050::new(i2c);
+    let mut mpu = MPU6050::new(i2c);
+    mpu.write_field(TempDisable::Enable).await.unwrap();
+    mpu.write_field(GyroFullScaleRange::FS500).await.unwrap();
+    mpu.write_field(AccelFullScaleRange::FS2).await.unwrap();
+    mpu.write_field(SleepMode::WakeUp).await.unwrap();
 
     let mut session = zenoh_nostd::open!(
         zenoh_nostd::zconfig!(
                 PlatformEmbassy: (spawner, PlatformEmbassy { stack: stack }),
-                TX: 512,
-                RX: 512,
+                TX: 2048,
+                RX: 2048,
                 SUBSCRIBERS: 2
         ),
         EndPoint::try_from(CONNECT.unwrap_or("tcp/192.168.21.90:7447")).unwrap()
     )
     .unwrap();
 
-    let ke: &'static keyexpr = "demo/gyro".try_into().unwrap();
-    let mut payload = [0u8; 12];
+    let ke: &'static keyexpr = KEYEXPR.unwrap_or("0/cmd_vel/geometry_msgs::msg::dds_::Twist_/RIHS01_9c45bf16fe0983d80e3cfe750d6835843d265a9a6c46bd2e609fcddde6fb8d2a").try_into().unwrap();
+    let mut payload = [0u8; 52];
+
+    let (offset_x, offset_y, _) = mpu.read_accel().await.unwrap();
 
     loop {
-        let gyro = mpu.get_gyro().await.unwrap();
+        defmt::debug!("Reading accel...");
+        let (acc_x, acc_y, _) = mpu.read_accel().await.unwrap();
+        defmt::debug!("Read accel: x={} y={}", acc_x, acc_y);
 
-        payload[0..4].copy_from_slice(&gyro.x.to_le_bytes());
-        payload[4..8].copy_from_slice(&gyro.y.to_le_bytes());
-        payload[8..12].copy_from_slice(&gyro.z.to_le_bytes());
+        let accz = (acc_x - offset_x) as f64 / 16384.0;
+        let accy = (acc_y - offset_y) as f64 / 16384.0;
 
-        session.put(ke, &payload).await.unwrap();
+        let accz = round(accz * 100.0) / 100.0;
+        let accy = round(accy * 100.0) / 100.0;
 
-        embassy_time::Timer::after(embassy_time::Duration::from_hz(16)).await;
+        let twist = twist::Twist {
+            linear: twist::Vector3 {
+                x: accy * scale_y,
+                y: 0.0,
+                z: 0.0,
+            },
+            angular: twist::Vector3 {
+                x: 0.0,
+                y: 0.0,
+                z: accz * scale_z,
+            },
+        };
+
+        defmt::info!(
+            "Twist linear.x={} angular.z={}",
+            accy * scale_y,
+            accz * scale_z
+        );
+
+        let size = twist::serialize_twist(&twist, &mut payload);
+        defmt::debug!("Putting payload of size {}", size);
+        session.put(ke, &payload[..size]).await.unwrap();
+        defmt::debug!("Put complete");
+
+        embassy_time::Timer::after(embassy_time::Duration::from_hz(5)).await;
     }
 }
 
@@ -91,11 +132,11 @@ async fn init_esp32(spawner: Spawner) -> (Stack<'static>, I2c<'static, Async>) {
 
     let i2c_bus = esp_hal::i2c::master::I2c::new(
         peripherals.I2C0,
-        esp_hal::i2c::master::Config::default().with_frequency(Rate::from_khz(400)),
+        esp_hal::i2c::master::Config::default().with_frequency(Rate::from_khz(100)),
     )
     .unwrap()
-    .with_scl(peripherals.GPIO10)
-    .with_sda(peripherals.GPIO11)
+    .with_scl(peripherals.GPIO11)
+    .with_sda(peripherals.GPIO10)
     .into_async();
 
     static RADIO_CTRL: StaticCell<Controller<'static>> = StaticCell::new();
